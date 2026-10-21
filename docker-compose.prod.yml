@@ -1,0 +1,97 @@
+# Production stack for timecard.clayton-montgomery.dev (app) and auth.clayton-montgomery.dev (sign-in).
+#
+# Runs behind the shared Caddy reverse proxy (~/infra). Nothing here publishes ports:
+# Caddy reaches the two web services over the external `edge` network by their aliases
+# `timecard-app:8080` and `timecard-auth:8081`. Postgres is only on the private network.
+#
+#   cp .env.production.example .env.production     # fill in secrets
+#   docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+#
+# See README.md → "Deploying" for the Caddy snippet and first-admin setup.
+
+name: timecard
+
+x-db-url: &db-url postgres://timecard:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/timecard?sslmode=disable
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: timecard
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: timecard
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U timecard -d timecard"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - internal
+
+  idp:
+    build:
+      context: .
+      target: idp
+    image: timecard-idp
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: *db-url
+      IDP_ADDR: ":8081"
+      IDP_ISSUER: https://${AUTH_DOMAIN:-auth.clayton-montgomery.dev}
+      IDP_CRYPTO_KEY: ${IDP_CRYPTO_KEY:?set IDP_CRYPTO_KEY}
+      IDP_ALLOW_SIGNUP: ${IDP_ALLOW_SIGNUP:-false}
+      IDP_TRUST_PROXY: "true"
+      IDP_APP_CLIENT_ID: timecard-web
+      IDP_APP_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:?set OIDC_CLIENT_SECRET}
+      IDP_APP_REDIRECT_URIS: https://${APP_DOMAIN:-timecard.clayton-montgomery.dev}/auth/callback
+      IDP_APP_POST_LOGOUT_URIS: https://${APP_DOMAIN:-timecard.clayton-montgomery.dev}/
+    networks:
+      internal:
+      edge:
+        aliases: [timecard-auth]
+
+  app:
+    build:
+      context: .
+      target: app
+    image: timecard-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      idp:
+        condition: service_started
+    environment:
+      DATABASE_URL: *db-url
+      APP_ADDR: ":8080"
+      APP_URL: https://${APP_DOMAIN:-timecard.clayton-montgomery.dev}
+      APP_TIMEZONE: ${APP_TIMEZONE:-America/Denver}
+      OIDC_ISSUER: https://${AUTH_DOMAIN:-auth.clayton-montgomery.dev}
+      OIDC_CLIENT_ID: timecard-web
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:?set OIDC_CLIENT_SECRET}
+      # Talk to the IdP over the private network (no round trip through public DNS + Caddy).
+      OIDC_INTERNAL_URL: http://idp:8081
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+    networks:
+      internal:
+      edge:
+        aliases: [timecard-app]
+
+networks:
+  internal:
+  edge:
+    name: edge
+    external: true
+
+volumes:
+  pgdata:

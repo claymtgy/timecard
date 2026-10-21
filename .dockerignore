@@ -1,0 +1,10 @@
+.git
+.env
+.env.*
+!.env.production.example
+**/node_modules
+web/dist
+bin
+*.exe
+scripts
+README.md

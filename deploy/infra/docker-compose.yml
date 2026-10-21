@@ -1,0 +1,41 @@
+# Shared reverse proxy for every service on this box.
+# Owns ports 80/443. Individual app repos join the `edge` network
+# and expose no ports of their own in production.
+#
+# The `edge` network is external and shared across repos, so it must exist
+# before any of these stacks (including this one) are brought up.
+#
+# Usage:
+#   docker network create edge   # once, if it doesn't already exist
+#   cp .env.example .env   # fill in real domains + email
+#   docker compose up -d --build
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      ACME_EMAIL: ${ACME_EMAIL}
+      BUDGET_APP_DOMAIN: ${BUDGET_APP_DOMAIN}
+      BUDGET_API_DOMAIN: ${BUDGET_API_DOMAIN}
+      GRIDLOCKED_DOMAIN: ${GRIDLOCKED_DOMAIN}
+      TIMECARD_DOMAIN: ${TIMECARD_DOMAIN}
+      TIMECARD_AUTH_DOMAIN: ${TIMECARD_AUTH_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - edge
+
+networks:
+  edge:
+    name: edge
+    external: true
+
+volumes:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,49 @@
+{
+        email {$ACME_EMAIL}
+}
+
+# --- Budgeting App ---
+# See ../Budgeting-App/docker-compose.prod-nginx.yml for the app-side setup.
+{$BUDGET_APP_DOMAIN} {
+        encode gzip
+        reverse_proxy budgeting-frontend:80
+}
+
+{$BUDGET_API_DOMAIN} {
+        encode gzip
+        reverse_proxy budgeting-backend:8080
+}
+
+# --- Gridlocked ---
+# See ../gridlocked-the-word-game/docker-compose.edge.yml for the app-side setup.
+{$GRIDLOCKED_DOMAIN} {
+        encode gzip
+
+        # Backend routes have no /api prefix (e.g. POST /login), so it must be stripped.
+        handle_path /api/* {
+                reverse_proxy gridlocked-backend:8000
+        }
+
+        # WS route is /ws/{room_key} on the backend itself — forward as-is, no strip.
+        handle /ws/* {
+                reverse_proxy gridlocked-backend:8000
+        }
+
+        handle {
+                reverse_proxy gridlocked-frontend:80
+        }
+}
+
+# --- Timecard (timesheets / PM / CRM) ---
+# See ../crm/docker-compose.prod.yml for the app-side setup.
+# App (UI + API on one origin).
+{$TIMECARD_DOMAIN} {
+        encode gzip
+        reverse_proxy timecard-app:8080
+}
+
+# Sign-in service (OIDC provider).
+{$TIMECARD_AUTH_DOMAIN} {
+        encode gzip
+        reverse_proxy timecard-auth:8081
+}

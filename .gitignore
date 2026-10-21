@@ -1,0 +1,7 @@
+.env
+/bin/
+*.exe
+node_modules/
+web/dist/
+.vite/
+.env.production

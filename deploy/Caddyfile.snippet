@@ -1,0 +1,19 @@
+# The full infra files (Caddyfile + docker-compose.yml with these blocks and env vars
+# already added) are in deploy/infra/. Add to ~/infra/.env:
+#     TIMECARD_DOMAIN=timecard.clayton-montgomery.dev
+#     TIMECARD_AUTH_DOMAIN=auth.clayton-montgomery.dev
+# Then: docker compose up -d   (in ~/infra) — Caddy fetches certificates automatically.
+
+# --- Timecard (timesheets / PM / CRM) ---
+# See ../crm/docker-compose.prod.yml for the app-side setup.
+# App (UI + API on one origin).
+{$TIMECARD_DOMAIN} {
+        encode gzip
+        reverse_proxy timecard-app:8080
+}
+
+# Sign-in service (OIDC provider).
+{$TIMECARD_AUTH_DOMAIN} {
+        encode gzip
+        reverse_proxy timecard-auth:8081
+}
