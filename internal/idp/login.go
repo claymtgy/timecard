@@ -25,6 +25,7 @@ const csrfCookie = "idp_csrf"
 type loginUI struct {
 	storage     *Storage
 	users       *Users
+	orgs        *Orgs
 	sessions    *sessionStore
 	callbackURL func(context.Context, string) string
 	allowSignup bool
@@ -176,13 +177,26 @@ func (l *loginUI) signupSubmit(w http.ResponseWriter, r *http.Request) {
 		l.render(w, http.StatusBadRequest, "signup", d)
 		return
 	}
-	if l.limiter.blocked("signup|" + clientIP(r)) {
+	// The organization password decides which company the account joins. Only wrong
+	// passwords count against the limit, so a crew sharing one IP can all register.
+	limitKey := "signup|" + clientIP(r)
+	if l.limiter.blocked(limitKey) {
 		d.Error = "Too many attempts. Wait a few minutes and try again."
 		l.render(w, http.StatusTooManyRequests, "signup", d)
 		return
 	}
-	l.limiter.fail("signup|" + clientIP(r)) // counts every sign-up to slow down mass registration
-	u, err := l.users.Create(r.Context(), d.Email, d.Name, r.PostFormValue("password"))
+	org, err := l.orgs.ByPassword(r.Context(), r.PostFormValue("org_password"))
+	if errors.Is(err, ErrOrgNotFound) {
+		l.limiter.fail(limitKey)
+		d.Error = "That organization password isn't right. Ask your company's admin for it."
+		l.render(w, http.StatusBadRequest, "signup", d)
+		return
+	}
+	if err != nil {
+		l.serverError(w, err)
+		return
+	}
+	u, err := l.users.Create(r.Context(), org.ID, d.Email, d.Name, r.PostFormValue("password"))
 	if err != nil {
 		if errors.Is(err, ErrEmailTaken) || isValidationError(err) {
 			d.Error = err.Error()
@@ -192,7 +206,7 @@ func (l *loginUI) signupSubmit(w http.ResponseWriter, r *http.Request) {
 		l.serverError(w, err)
 		return
 	}
-	slog.Info("user signed up", "user_id", u.ID)
+	slog.Info("user signed up", "user_id", u.ID, "org_id", org.ID)
 	if id == "" {
 		if _, err := l.sessions.create(r.Context(), w, r, u.ID); err != nil {
 			l.serverError(w, err)
@@ -229,6 +243,35 @@ func (l *loginUI) finish(w http.ResponseWriter, r *http.Request, authRequestID, 
 		return
 	}
 	http.Redirect(w, r, l.callbackURL(r.Context(), authRequestID), http.StatusSeeOther)
+}
+
+// GET /internal/org-password?org_id=... — for relying parties only (HTTP Basic with the
+// client's id and secret). The app decides which of its users may see the result.
+func (l *loginUI) orgPassword(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	limitKey := "internal|" + clientIP(r)
+	if l.limiter.blocked(limitKey) {
+		http.Error(w, "too many attempts", http.StatusTooManyRequests)
+		return
+	}
+	id, secret, ok := r.BasicAuth()
+	if !ok || l.storage.AuthorizeClientIDSecret(r.Context(), id, secret) != nil {
+		l.limiter.fail(limitKey)
+		w.Header().Set("WWW-Authenticate", `Basic realm="internal"`)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	password, err := l.orgs.Password(r.Context(), r.URL.Query().Get("org_id"))
+	switch {
+	case errors.Is(err, ErrOrgNotFound), errors.Is(err, ErrOrgPasswordUnavailable):
+		http.Error(w, "not available", http.StatusNotFound)
+	case err != nil:
+		slog.Error("read organization password", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	default:
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Write([]byte(password))
+	}
 }
 
 // GET /account

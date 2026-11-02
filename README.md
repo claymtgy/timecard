@@ -23,19 +23,50 @@ go run ./cmd/app                     # terminal 2 — API on http://localhost:80
 cd web && npm install && npm run dev # terminal 3 — UI on http://localhost:5173
 ```
 
-Open http://localhost:5173 → **Sign in**. In development `IDP_ALLOW_SIGNUP=true`, so choose **Create one** on the
-sign-in page. **The first person to sign in becomes the app's admin**; everyone after starts as a *worker*
-until an admin changes their role (Users page). Link each person's login to their worker record there
-(or give the worker the same email and it links automatically on first sign-in).
+Create an organization, which prints its organization password:
+
+```bash
+go run ./cmd/idp org add -name "Acme Roofing"
+```
+
+Open http://localhost:5173 → **Sign in** → **Create one**, and enter that password. **The first person to sign in
+to an organization becomes its admin**; everyone after starts as a *worker* until an admin changes their role
+(Users page). A login and a worker with the same email link automatically, in either order.
 
 Accounts can also be managed from the command line (the password is read from stdin):
 
 ```bash
-go run ./cmd/idp user add -email you@example.com -name "Your Name"
+go run ./cmd/idp user add -org "Acme Roofing" -email you@example.com -name "Your Name"
 go run ./cmd/idp user passwd -email you@example.com
 go run ./cmd/idp user disable -email someone@example.com
 go run ./cmd/idp user list
 ```
+
+## Organizations
+
+Several companies can share one deployment. Each company's data is invisible to the others.
+
+Organizations are managed only from the command line:
+
+```bash
+idp org add -name "Acme Roofing"        # prints a generated password (-prompt to type your own)
+idp org list
+idp org passwd -name "Acme Roofing"     # replaces the password; existing members are unaffected
+idp org rename -name "Old" -to "New"
+```
+
+* New users choose **Create one** and enter the organization password, which alone decides their company, so
+  each password must be unique. Admins of the organization can see it on the Users page (it is stored encrypted with `IDP_CRYPTO_KEY`). Use `org passwd` to replace it.
+* Give the password to the company's owner first: **the first person to sign in becomes that company's admin.**
+* An email address can belong to only one organization.
+* Clients, projects, invoices, invoice numbers, company details and so on are all per organization.
+
+Isolation is enforced by the database. API requests run in a transaction under the restricted `timecard_tenant` role
+with Postgres row-level security, so a query with no organization filter still sees only its own company
+([tenant.go](internal/app/tenant.go), [0003_organizations.sql](internal/app/migrations/0003_organizations.sql)). Foreign keys
+include `org_id`, so no row can reference another company's record. New tenant tables must follow the same pattern.
+
+The database user must be able to create roles (the Compose setups' user is a superuser).
 
 ## How it works
 
@@ -117,12 +148,12 @@ shared Caddy proxy in `~/infra`. It publishes no ports: Caddy reaches `timecard-
    ```bash
    fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
    ```
-5. **First admin** — sign-up is off in production, so create your account from the CLI (it asks for a password):
+5. **First organization** — this prints the organization password:
    ```bash
-   docker compose -f docker-compose.prod.yml --env-file .env.production exec idp idp user add -email you@example.com -name "Your Name"
+   docker compose -f docker-compose.prod.yml --env-file .env.production exec idp idp org add -name "Acme Roofing"
    ```
-   Then open https://timecard.clayton-montgomery.dev and sign in — the first sign-in becomes the app admin.
-   Add crew members the same way (or temporarily set `IDP_ALLOW_SIGNUP=true`).
+   Then open https://timecard.clayton-montgomery.dev and choose **Create one** with that password. The first sign-in
+   becomes that organization's admin; share the password with the rest of the crew so they can join.
 
 **Updating:** `git pull`, then the same `up -d --build` command; migrations run automatically on start.
 **Backups:** `docker compose -f docker-compose.prod.yml --env-file .env.production exec postgres pg_dump -U timecard timecard > backup.sql`
@@ -136,7 +167,8 @@ still carry the public issuer `https://auth.clayton-montgomery.dev`.
 * Serve both services over HTTPS. Set `IDP_ISSUER`, `APP_URL`, redirect URIs accordingly; cookies become `Secure`
   automatically for `https://` URLs.
 * Generate real secrets: `IDP_CRYPTO_KEY` (32+ random chars) and `IDP_APP_CLIENT_SECRET` / `OIDC_CLIENT_SECRET` (must match).
-* Set `IDP_ALLOW_SIGNUP=false` and create accounts with `idp user add`.
+* Sign-up requires an organization password. Set `IDP_ALLOW_SIGNUP=false` to allow only accounts made with `idp user add`.
+* Keep `IDP_CRYPTO_KEY` stable: organization passwords are hashed with it, so changing it requires `idp org passwd` for each organization.
 * Set `APP_TIMEZONE` to where the crew works, and real SMTP settings.
 * Build the UI (`cd web && npm run build`) and point `APP_WEB_DIST` at `web/dist`; `cmd/app` then serves UI and API
   from one origin (use `APP_URL=https://your-host`).

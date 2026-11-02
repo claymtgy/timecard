@@ -1,7 +1,11 @@
 // Command idp runs the OpenID Connect provider and manages its user accounts.
 //
 //	idp                      start the server (same as "idp serve")
-//	idp user add -email a@b.c -name "Ada Lovelace"   (password read from stdin)
+//	idp org add -name "Acme Roofing" [-prompt]      (prints a generated organization password)
+//	idp org list
+//	idp org passwd -name "Acme Roofing" [-prompt]   (replaces the organization password)
+//	idp org rename -name "Old" -to "New"
+//	idp user add -org "Acme Roofing" -email a@b.c -name "Ada Lovelace"   (password read from stdin)
 //	idp user passwd -email a@b.c                    (password read from stdin)
 //	idp user disable|enable -email a@b.c
 //	idp user list
@@ -43,7 +47,11 @@ func main() {
 		fatal(userCmd(ctx, args[1], args[2:]))
 		return
 	}
-	fmt.Fprintln(os.Stderr, "usage: idp [serve] | idp user add|passwd|disable|enable|list [flags]")
+	if args[0] == "org" && len(args) >= 2 {
+		fatal(orgCmd(ctx, args[1], args[2:]))
+		return
+	}
+	fmt.Fprintln(os.Stderr, "usage: idp [serve] | idp org add|list|passwd|rename [flags] | idp user add|passwd|disable|enable|list [flags]")
 	os.Exit(2)
 }
 
@@ -127,6 +135,7 @@ func userCmd(ctx context.Context, sub string, args []string) error {
 	fset := flag.NewFlagSet("user "+sub, flag.ExitOnError)
 	email := fset.String("email", "", "account email")
 	name := fset.String("name", "", "full name (add only)")
+	orgName := fset.String("org", "", "organization name (add only)")
 	fset.Parse(args)
 
 	pool, err := openDB(ctx)
@@ -146,7 +155,7 @@ func userCmd(ctx context.Context, sub string, args []string) error {
 			if u.Disabled {
 				status = "disabled"
 			}
-			fmt.Printf("%s  %-30s  %-24s  %s\n", u.ID, u.Email, u.Name, status)
+			fmt.Printf("%s  %-30s  %-24s  %-24s  %s\n", u.ID, u.Email, u.Name, u.OrgName, status)
 		}
 		return nil
 	}
@@ -155,11 +164,18 @@ func userCmd(ctx context.Context, sub string, args []string) error {
 	}
 	switch sub {
 	case "add":
+		if *orgName == "" {
+			return errors.New("-org is required (see `idp org list`)")
+		}
+		org, err := idp.NewOrgs(pool, config.String("IDP_CRYPTO_KEY", "")).ByName(ctx, *orgName)
+		if err != nil {
+			return fmt.Errorf("%s: %w", *orgName, err)
+		}
 		pw, err := readPassword()
 		if err != nil {
 			return err
 		}
-		u, err := users.Create(ctx, *email, *name, pw)
+		u, err := users.Create(ctx, org.ID, *email, *name, pw)
 		if err != nil {
 			return err
 		}
@@ -203,4 +219,90 @@ func readPassword() (string, error) {
 		return "", err
 	}
 	return strings.TrimRight(line, "\r\n"), nil
+}
+
+func orgCmd(ctx context.Context, sub string, args []string) error {
+	fset := flag.NewFlagSet("org "+sub, flag.ExitOnError)
+	name := fset.String("name", "", "organization name")
+	to := fset.String("to", "", "new name (rename only)")
+	prompt := fset.Bool("prompt", false, "type the organization password instead of generating one")
+	fset.Parse(args)
+
+	key := config.String("IDP_CRYPTO_KEY", "")
+	if len(key) < 32 {
+		return errors.New("IDP_CRYPTO_KEY must be at least 32 characters")
+	}
+	pool, err := openDB(ctx)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	orgs := idp.NewOrgs(pool, key)
+
+	newPassword := func() (string, error) {
+		if *prompt {
+			return readPassword()
+		}
+		return idp.GenerateOrgPassword(), nil
+	}
+	showPassword := func(orgName, password string) {
+		fmt.Printf("Organization: %s\nOrganization password: %s\n\n", orgName, password)
+		fmt.Println("Give this to the company's first user: whoever signs in to the app first becomes its admin.")
+		fmt.Println("Admins of the organization can see it on the Users page; run `idp org passwd` to replace it.")
+	}
+
+	switch sub {
+	case "list":
+		list, err := orgs.List(ctx)
+		if err != nil {
+			return err
+		}
+		for _, o := range list {
+			joinable := "joinable"
+			if !o.HasJoin {
+				joinable = "no password set"
+			}
+			fmt.Printf("%s  %-30s  %3d users  %s\n", o.ID, o.Name, o.Members, joinable)
+		}
+		return nil
+	case "add":
+		if *name == "" {
+			return errors.New("-name is required")
+		}
+		pw, err := newPassword()
+		if err != nil {
+			return err
+		}
+		org, err := orgs.Create(ctx, *name, pw)
+		if err != nil {
+			return err
+		}
+		showPassword(org.Name, pw)
+		return nil
+	case "passwd", "rename":
+		if *name == "" {
+			return errors.New("-name is required")
+		}
+		org, err := orgs.ByName(ctx, *name)
+		if err != nil {
+			return fmt.Errorf("%s: %w", *name, err)
+		}
+		if sub == "rename" {
+			if err := orgs.Rename(ctx, org.ID, *to); err != nil {
+				return err
+			}
+			fmt.Println("renamed to", *to)
+			return nil
+		}
+		pw, err := newPassword()
+		if err != nil {
+			return err
+		}
+		if err := orgs.SetPassword(ctx, org.ID, pw); err != nil {
+			return err
+		}
+		showPassword(org.Name, pw)
+		return nil
+	}
+	return fmt.Errorf("unknown org command %q", sub)
 }

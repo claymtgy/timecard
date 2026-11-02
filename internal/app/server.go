@@ -39,7 +39,7 @@ type Config struct {
 
 type Server struct {
 	cfg  Config
-	db   *pgxpool.Pool
+	db   *tenantDB
 	oidc *oidcClient
 	loc  *time.Location
 }
@@ -50,7 +50,7 @@ func New(cfg Config, db *pgxpool.Pool) *Server {
 	if loc == nil {
 		loc = time.Local
 	}
-	return &Server{cfg: cfg, db: db, oidc: &oidcClient{cfg: cfg}, loc: loc}
+	return &Server{cfg: cfg, db: &tenantDB{pool: db}, oidc: &oidcClient{cfg: cfg}, loc: loc}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -125,6 +125,7 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("GET /api/reports/projects", manager(s.projectProfitReport))
 	api.HandleFunc("GET /api/reports/dashboard", h(s.dashboard))
 
+	api.HandleFunc("GET /api/organization/password", admin(s.getOrgPassword))
 	api.HandleFunc("GET /api/users", admin(s.listUsers))
 	api.HandleFunc("PATCH /api/users/{id}", admin(s.updateUser))
 
@@ -133,7 +134,7 @@ func (s *Server) Handler() http.Handler {
 	})
 
 	root := http.NewServeMux()
-	root.Handle("/api/", requireAuth(api))
+	root.Handle("/api/", requireAuth(s.withTenant(api)))
 	root.HandleFunc("GET /auth/login", h(s.handleLogin))
 	root.HandleFunc("GET /auth/callback", h(s.handleCallback))
 	root.Handle("POST /auth/logout", requireAuth(h(s.handleLogout)))

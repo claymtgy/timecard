@@ -24,6 +24,8 @@ func Connect(ctx context.Context, url, schema string) (*pgxpool.Pool, error) {
 	cfg.ConnConfig.RuntimeParams["search_path"] = schema + ",public"
 	// ISO output makes date::text always YYYY-MM-DD.
 	cfg.ConnConfig.RuntimeParams["DateStyle"] = "ISO, YMD"
+	// The app holds one connection per in-flight API request.
+	cfg.MaxConns = 20
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, err

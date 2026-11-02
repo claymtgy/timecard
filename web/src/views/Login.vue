@@ -13,7 +13,7 @@ const target = loginUrl(location.pathname === '/' ? '/' : location.pathname + lo
       <h1>Welcome</h1>
       <p class="muted">Sign in to clock in, track your time and see your tasks.</p>
       <a class="btn primary big" :href="target">Sign in</a>
-      <p class="small muted" style="margin-top: 18px">New here? Choose <strong>Create one</strong> on the next screen, or ask your admin for an account.</p>
+      <p class="small muted" style="margin-top: 18px">New here? Choose <strong>Create one</strong> on the next screen. You’ll need your company’s organization password from your admin.</p>
     </div>
   </div>
 </template>

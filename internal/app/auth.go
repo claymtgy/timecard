@@ -31,6 +31,8 @@ const (
 type User struct {
 	ID       int64  `json:"id"`
 	Subject  string `json:"-"`
+	OrgID    string `json:"-"`
+	OrgName  string `json:"organization"`
 	Email    string `json:"email"`
 	Name     string `json:"name"`
 	Role     string `json:"role"`
@@ -210,14 +212,19 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) error {
 		return fail("nonce mismatch", nil)
 	}
 	var claims struct {
-		Email string `json:"email"`
-		Name  string `json:"name"`
+		Email   string `json:"email"`
+		Name    string `json:"name"`
+		OrgID   string `json:"org_id"`
+		OrgName string `json:"org_name"`
 	}
 	if err := idToken.Claims(&claims); err != nil {
 		return fail("unreadable claims", err)
 	}
 
-	userID, err := s.upsertUser(ctx, idToken.Subject, claims.Email, claims.Name)
+	if claims.OrgID == "" {
+		return fail("your account has no organization", nil)
+	}
+	userID, err := s.upsertUser(ctx, claims.OrgID, claims.OrgName, idToken.Subject, claims.Email, claims.Name)
 	if err != nil {
 		return err
 	}
@@ -234,9 +241,10 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// upsertUser records the login. The very first user becomes admin; a new user is
-// linked to the worker with the same email if one exists and is unlinked.
-func (s *Server) upsertUser(ctx context.Context, subject, email, name string) (int64, error) {
+// upsertUser records the login and mirrors its organization. The first user of an organization
+// becomes its admin; an unlinked user is linked to the unlinked worker with the same email.
+// This runs before there is a tenant, so every statement names the organization itself.
+func (s *Server) upsertUser(ctx context.Context, orgID, orgName, subject, email, name string) (int64, error) {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return 0, err
@@ -245,23 +253,35 @@ func (s *Server) upsertUser(ctx context.Context, subject, email, name string) (i
 	if _, err := tx.Exec(ctx, `LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE`); err != nil {
 		return 0, err
 	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO organizations (id, name) VALUES ($1::uuid, $2)
+		ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name`, orgID, orgName); err != nil {
+		return 0, err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO company_settings (org_id) VALUES ($1::uuid) ON CONFLICT (org_id) DO NOTHING`, orgID); err != nil {
+		return 0, err
+	}
 	var id int64
-	var inserted bool
+	// The WHERE refuses a login whose organization differs from the stored one (no row returned).
 	err = tx.QueryRow(ctx, `
-		INSERT INTO users (subject, email, name, role, last_login_at)
-		VALUES ($1, $2, $3, CASE WHEN EXISTS (SELECT 1 FROM users) THEN 'worker' ELSE 'admin' END, now())
+		INSERT INTO users (org_id, subject, email, name, role, last_login_at)
+		VALUES ($1::uuid, $2, $3, $4, CASE WHEN EXISTS (SELECT 1 FROM users WHERE org_id = $1::uuid) THEN 'worker' ELSE 'admin' END, now())
 		ON CONFLICT (subject) DO UPDATE SET email = EXCLUDED.email, name = EXCLUDED.name, last_login_at = now()
-		RETURNING id, (xmax = 0)`, subject, email, name).Scan(&id, &inserted)
+		WHERE users.org_id = EXCLUDED.org_id
+		RETURNING id`, orgID, subject, email, name).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, errConflict("this account belongs to a different organization")
+	}
 	if err != nil {
 		return 0, err
 	}
-	if inserted && email != "" {
+	if email != "" {
 		if _, err := tx.Exec(ctx, `
 			UPDATE users SET worker_id = (
 			  SELECT w.id FROM workers w
-			  WHERE lower(w.email) = lower($2) AND NOT EXISTS (SELECT 1 FROM users u WHERE u.worker_id = w.id)
+			  WHERE w.org_id = $3::uuid AND lower(w.email) = lower($2) AND NOT EXISTS (SELECT 1 FROM users u WHERE u.worker_id = w.id)
 			  ORDER BY w.id LIMIT 1)
-			WHERE id = $1`, id, email); err != nil {
+			WHERE id = $1 AND worker_id IS NULL`, id, email, orgID); err != nil {
 			return 0, err
 		}
 	}
@@ -299,10 +319,10 @@ func (s *Server) withSession(next http.Handler) http.Handler {
 		}
 		sess := &session{User: &User{}}
 		err = s.db.QueryRow(r.Context(), `
-			SELECT s.id, s.csrf_token, s.id_token, u.id, u.subject, u.email, u.name, u.role, u.worker_id
-			FROM sessions s JOIN users u ON u.id = s.user_id
+			SELECT s.id, s.csrf_token, s.id_token, u.id, u.subject, u.org_id::text, g.name, u.email, u.name, u.role, u.worker_id
+			FROM sessions s JOIN users u ON u.id = s.user_id JOIN organizations g ON g.id = u.org_id
 			WHERE s.id = $1 AND s.expires_at > now()`, sha256Hex(c.Value)).
-			Scan(&sess.ID, &sess.CSRFToken, &sess.IDToken, &sess.User.ID, &sess.User.Subject, &sess.User.Email,
+			Scan(&sess.ID, &sess.CSRFToken, &sess.IDToken, &sess.User.ID, &sess.User.Subject, &sess.User.OrgID, &sess.User.OrgName, &sess.User.Email,
 				&sess.User.Name, &sess.User.Role, &sess.User.WorkerID)
 		if err != nil {
 			if !errors.Is(err, pgx.ErrNoRows) {

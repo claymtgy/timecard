@@ -19,6 +19,8 @@ import (
 // User is an account at the identity provider.
 type User struct {
 	ID            string
+	OrgID         string
+	OrgName       string
 	Email         string
 	Name          string
 	GivenName     string
@@ -40,11 +42,11 @@ type Users struct{ db *pgxpool.Pool }
 
 func NewUsers(db *pgxpool.Pool) *Users { return &Users{db: db} }
 
-const userCols = `id::text, email, name, given_name, family_name, password_hash, email_verified, disabled, created_at`
+const userCols = `id::text, org_id::text, (SELECT o.name FROM organizations o WHERE o.id = users.org_id), email, name, given_name, family_name, password_hash, email_verified, disabled, created_at`
 
 func scanUser(row pgx.Row) (*User, error) {
 	u := &User{}
-	err := row.Scan(&u.ID, &u.Email, &u.Name, &u.GivenName, &u.FamilyName, &u.PasswordHash, &u.EmailVerified, &u.Disabled, &u.CreatedAt)
+	err := row.Scan(&u.ID, &u.OrgID, &u.OrgName, &u.Email, &u.Name, &u.GivenName, &u.FamilyName, &u.PasswordHash, &u.EmailVerified, &u.Disabled, &u.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrUserNotFound
 	}
@@ -80,7 +82,7 @@ func (s *Users) List(ctx context.Context) ([]*User, error) {
 }
 
 // Create validates input, hashes the password and inserts the user.
-func (s *Users) Create(ctx context.Context, email, name, password string) (*User, error) {
+func (s *Users) Create(ctx context.Context, orgID, email, name, password string) (*User, error) {
 	email = strings.TrimSpace(email)
 	name = strings.TrimSpace(name)
 	if !strings.Contains(email, "@") || len(email) > 254 {
@@ -98,9 +100,9 @@ func (s *Users) Create(ctx context.Context, email, name, password string) (*User
 	}
 	given, family := splitName(name)
 	u, err := scanUser(s.db.QueryRow(ctx, `
-		INSERT INTO users (email, name, given_name, family_name, password_hash)
-		VALUES ($1, $2, $3, $4, $5)
-		RETURNING `+userCols, email, name, given, family, hash))
+		INSERT INTO users (org_id, email, name, given_name, family_name, password_hash)
+		VALUES ($1::uuid, $2, $3, $4, $5, $6)
+		RETURNING `+userCols, orgID, email, name, given, family, hash))
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		return nil, ErrEmailTaken

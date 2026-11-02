@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -90,5 +91,50 @@ func TestInternalOIDCRewrite(t *testing.T) {
 	resp.Body.Close()
 	if gotHost != "auth.clayton-montgomery.dev" || gotProto != "https" {
 		t.Fatalf("host=%q proto=%q", gotHost, gotProto)
+	}
+}
+
+func TestBufferedResponseHoldsUntilSend(t *testing.T) {
+	rec := httptest.NewRecorder()
+	b := &bufferedResponse{ResponseWriter: rec}
+	writeJSON(b, http.StatusCreated, map[string]string{"a": "b"})
+	if b.status != http.StatusCreated || rec.Body.Len() != 0 {
+		t.Fatalf("status %d, leaked %d bytes before commit", b.status, rec.Body.Len())
+	}
+	b.send()
+	if rec.Code != http.StatusCreated || !strings.Contains(rec.Body.String(), `"a"`) {
+		t.Fatalf("code %d body %q", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+		t.Fatalf("content type %q", ct)
+	}
+}
+
+func TestFetchOrgPassword(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, secret, _ := r.BasicAuth()
+		switch {
+		case id != "web" || secret != "s3cret":
+			w.WriteHeader(http.StatusUnauthorized)
+		case r.URL.Path != "/internal/org-password":
+			t.Errorf("path %s", r.URL.Path)
+		case r.URL.Query().Get("org_id") == "known":
+			w.Write([]byte("ABCD-EFGH"))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	s := &Server{cfg: Config{OIDCIssuer: srv.URL, OIDCClientID: "web", OIDCClientSecret: "s3cret"}, oidc: &oidcClient{}}
+	got, err := s.fetchOrgPassword(context.Background(), "known")
+	if err != nil || got == nil || *got != "ABCD-EFGH" {
+		t.Fatalf("known: %v %v", got, err)
+	}
+	if got, err := s.fetchOrgPassword(context.Background(), "old"); err != nil || got != nil {
+		t.Fatalf("unrecoverable should be nil: %v %v", got, err)
+	}
+	s.cfg.OIDCClientSecret = "wrong"
+	if _, err := s.fetchOrgPassword(context.Background(), "known"); err == nil {
+		t.Fatal("bad credentials should be an error")
 	}
 }

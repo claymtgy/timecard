@@ -45,7 +45,7 @@ services:
       IDP_ADDR: ":8081"
       IDP_ISSUER: https://${AUTH_DOMAIN:-auth.clayton-montgomery.dev}
       IDP_CRYPTO_KEY: ${IDP_CRYPTO_KEY:?set IDP_CRYPTO_KEY}
-      IDP_ALLOW_SIGNUP: ${IDP_ALLOW_SIGNUP:-false}
+      IDP_ALLOW_SIGNUP: ${IDP_ALLOW_SIGNUP:-true}
       IDP_TRUST_PROXY: "true"
       IDP_APP_CLIENT_ID: timecard-web
       IDP_APP_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:?set OIDC_CLIENT_SECRET}

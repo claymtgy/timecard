@@ -20,6 +20,19 @@ async function update(u: AppUser, body: { role?: Role; worker_id?: number; clear
     users.value = await api.get<AppUser[]>('/api/users') // revert the select
   }
 }
+// Fetched only when asked for, so it isn't on screen by default.
+const orgPassword = ref<{ password: string | null } | null>(null)
+const copied = ref(false)
+async function showOrgPassword() {
+  const r = await run(() => api.get<{ password: string | null }>('/api/organization/password'))
+  if (r) orgPassword.value = r
+}
+async function copyOrgPassword() {
+  if (!orgPassword.value?.password) return
+  await navigator.clipboard.writeText(orgPassword.value.password)
+  copied.value = true
+  setTimeout(() => (copied.value = false), 2000)
+}
 function onWorker(u: AppUser, v: string) {
   update(u, v === '' ? { clear_worker: true } : { worker_id: Number(v) })
 }
@@ -32,6 +45,17 @@ function onWorker(u: AppUser, v: string) {
     <strong>managers</strong> see money (invoices, payroll, profit), <strong>workers</strong> log their own time and work their tasks.
   </p>
   <div v-if="error" class="error">{{ error }}</div>
+  <div class="card" style="margin-bottom: 16px">
+    <h2>Organization password</h2>
+    <p class="small muted" style="margin-top: 0">New people enter this when they choose <strong>Create one</strong> on the sign-in page. Anyone who has it can join {{ session.me?.organization }}, so share it only with your crew.</p>
+    <div v-if="orgPassword?.password" class="row">
+      <code style="font-size: 16px">{{ orgPassword.password }}</code>
+      <button class="small" @click="copyOrgPassword">{{ copied ? 'Copied' : 'Copy' }}</button>
+      <button class="small ghost" @click="orgPassword = null">Hide</button>
+    </div>
+    <p v-else-if="orgPassword" class="neg" style="margin-bottom: 0">This password can't be displayed because it was set before this feature existed. Ask whoever runs the service to run <code>idp org passwd</code>, which replaces it.</p>
+    <button v-else class="small" @click="showOrgPassword">Show password</button>
+  </div>
   <div class="card flush">
     <table>
       <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Worker (for timesheets)</th><th>Last sign-in</th></tr></thead>

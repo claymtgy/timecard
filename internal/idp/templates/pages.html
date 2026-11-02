@@ -47,16 +47,18 @@
 
 {{define "signup"}}{{template "head" .}}
   <h1>Create account</h1>
-  <p class="sub">Passwords need at least 10 characters.</p>
+  <p class="sub">Your company's admin can give you the organization password.</p>
   {{if .Error}}<div class="err" role="alert">{{.Error}}</div>{{end}}
   <form method="post" action="/signup">
     <input type="hidden" name="authRequestID" value="{{.AuthRequestID}}">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label for="org_password">Organization password</label>
+    <input id="org_password" name="org_password" autocomplete="off" autocapitalize="characters" required autofocus>
     <label for="name">Full name</label>
-    <input id="name" name="name" autocomplete="name" required autofocus value="{{.Name}}">
+    <input id="name" name="name" autocomplete="name" required value="{{.Name}}">
     <label for="email">Email</label>
     <input id="email" name="email" type="email" autocomplete="username" required value="{{.Email}}">
-    <label for="password">Password</label>
+    <label for="password">Your password <span style="font-weight:400">(at least 10 characters)</span></label>
     <input id="password" name="password" type="password" autocomplete="new-password" minlength="10" required>
     <button type="submit">Create account</button>
   </form>

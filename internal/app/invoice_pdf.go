@@ -23,7 +23,7 @@ type CompanySettings struct {
 
 func (s *Server) companySettings(ctx context.Context) (CompanySettings, error) {
 	return one[CompanySettings](ctx, s.db, `
-		SELECT name, address, phone, email, invoice_footer, default_due_days::bigint FROM company_settings WHERE id = 1`)
+		SELECT name, address, phone, email, invoice_footer, default_due_days::bigint FROM company_settings`)
 }
 
 type clientContact struct {

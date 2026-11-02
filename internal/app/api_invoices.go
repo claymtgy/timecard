@@ -233,7 +233,7 @@ func (s *Server) createInvoice(w http.ResponseWriter, r *http.Request) error {
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO invoices (number, client_id, period_start, period_end, issue_date, due_date, notes)
 		VALUES ($1, $2, $3::date, $4::date, coalesce($5::date, CURRENT_DATE),
-		  coalesce($6::date, coalesce($5::date, CURRENT_DATE) + (SELECT default_due_days FROM company_settings WHERE id = 1)), $7)
+		  coalesce($6::date, coalesce($5::date, CURRENT_DATE) + (SELECT default_due_days FROM company_settings)), $7)
 		RETURNING id`,
 		number, in.ClientID, in.PeriodStart, in.PeriodEnd, in.IssueDate, in.DueDate, in.Notes).Scan(&invID); err != nil {
 		return err

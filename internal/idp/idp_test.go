@@ -2,6 +2,7 @@ package idp
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/zitadel/oidc/v3/pkg/oidc"
@@ -51,5 +52,62 @@ func TestAuthRequestRoundTrip(t *testing.T) {
 	}
 	if back.Done() || back.GetAMR() != nil {
 		t.Fatal("new request must not be done")
+	}
+}
+
+func TestOrgPassword(t *testing.T) {
+	o := &Orgs{key: []byte("test-key")}
+	if o.hash("  abcd-efgh-jkmn ") != o.hash("ABCD-EFGH-JKMN") {
+		t.Fatal("hash should ignore case and surrounding space")
+	}
+	if o.hash("ABCD-EFGH-JKMN") == (&Orgs{key: []byte("other")}).hash("ABCD-EFGH-JKMN") {
+		t.Fatal("hash must depend on the server key")
+	}
+	a, b := GenerateOrgPassword(), GenerateOrgPassword()
+	if a == b || len(a) != 19 || validateOrgPassword(a) != nil {
+		t.Fatalf("generated %q %q", a, b)
+	}
+	if validateOrgPassword("short") == nil {
+		t.Fatal("short password accepted")
+	}
+}
+
+// The app refuses logins without these claims, so they must survive into the ID token.
+func TestOrgClaimsReachIDToken(t *testing.T) {
+	info := new(oidc.UserInfo)
+	info.AppendClaims("org_id", "abc")
+	info.AppendClaims("org_name", "Acme")
+	claims := new(oidc.IDTokenClaims)
+	claims.SetUserInfo(info)
+	b, err := json.Marshal(claims)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["org_id"] != "abc" || got["org_name"] != "Acme" {
+		t.Fatalf("claims missing: %s", b)
+	}
+}
+
+func TestOrgPasswordEncryption(t *testing.T) {
+	o := &Orgs{key: []byte("test-key")}
+	enc, err := o.encrypt(" abcd-efgh-jkmn ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(enc, "abcd") {
+		t.Fatal("not encrypted")
+	}
+	if got, err := o.decrypt(enc); err != nil || got != "abcd-efgh-jkmn" {
+		t.Fatalf("got %q, %v", got, err)
+	}
+	if _, err := (&Orgs{key: []byte("other")}).decrypt(enc); err == nil {
+		t.Fatal("decrypted with the wrong key")
+	}
+	if again, _ := o.encrypt("abcd-efgh-jkmn"); again == enc {
+		t.Fatal("encryption must not be deterministic")
 	}
 }

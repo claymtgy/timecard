@@ -12,6 +12,8 @@
 
 BEGIN;
 SET LOCAL search_path TO app;
+-- Everything below goes to the default organization (column defaults read this setting).
+SELECT set_config('app.org_id', '00000000-0000-0000-0000-000000000001', true);
 
 DO $$
 BEGIN
@@ -22,7 +24,7 @@ END $$;
 
 UPDATE company_settings SET name = 'Demo Roofing & Framing', address = '12 Main St' || chr(10) || 'Hyrum, UT 84319',
   phone = '435-555-0100', email = 'office@example.com', invoice_footer = 'Checks payable to Demo Roofing & Framing. Thank you!'
-WHERE id = 1;
+WHERE org_id = current_org();
 
 INSERT INTO clients (name, contact_name, email, notes)
 VALUES ('Demo Builder Co.', 'Pat Builder', 'pat@example.com', 'Sample client created by scripts/demo_seed.sql');

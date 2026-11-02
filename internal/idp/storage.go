@@ -484,6 +484,9 @@ func (s *Storage) setUserinfo(ctx context.Context, info *oidc.UserInfo, userID s
 			info.GivenName = u.GivenName
 			info.FamilyName = u.FamilyName
 			info.PreferredUsername = u.Email
+			// The app scopes all data to this organization.
+			info.AppendClaims("org_id", u.OrgID)
+			info.AppendClaims("org_name", u.OrgName)
 		}
 	}
 	return nil

@@ -26,8 +26,7 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) error {
 		return errBad("default due days must be between 0 and 365")
 	}
 	if _, err := s.db.Exec(r.Context(), `
-		UPDATE company_settings SET name=$1, address=$2, phone=$3, email=$4, invoice_footer=$5, default_due_days=$6, updated_at=now()
-		WHERE id = 1`,
+		UPDATE company_settings SET name=$1, address=$2, phone=$3, email=$4, invoice_footer=$5, default_due_days=$6, updated_at=now()`,
 		strings.TrimSpace(in.Name), strings.TrimSpace(in.Address), strings.TrimSpace(in.Phone), strings.TrimSpace(in.Email),
 		strings.TrimSpace(in.InvoiceFooter), in.DefaultDueDays); err != nil {
 		return err

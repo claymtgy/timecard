@@ -61,7 +61,7 @@ export const api = {
 export type Role = 'admin' | 'manager' | 'worker'
 
 export interface Me {
-  user: { id: number; email: string; name: string; role: Role; worker_id: number | null }
+  user: { id: number; email: string; name: string; role: Role; worker_id: number | null; organization: string }
   csrf_token: string
 }
 

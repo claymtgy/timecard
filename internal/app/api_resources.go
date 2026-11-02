@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"net/http"
 	"strings"
 )
@@ -59,6 +60,19 @@ func (in *workerInput) validate() error {
 	return nonNegative("pay rate", in.PayRateCents)
 }
 
+// linkWorkerToUser links an unlinked worker to the unlinked login with the same email,
+// for when the person signed in before their worker record existed.
+func (s *Server) linkWorkerToUser(ctx context.Context, workerID int64, email string) error {
+	if email == "" {
+		return nil
+	}
+	_, err := s.db.Exec(ctx, `
+		UPDATE users SET worker_id = $1
+		WHERE id = (SELECT u.id FROM users u WHERE lower(u.email) = lower($2) AND u.worker_id IS NULL ORDER BY u.id LIMIT 1)
+		  AND NOT EXISTS (SELECT 1 FROM users u WHERE u.worker_id = $1)`, workerID, email)
+	return err
+}
+
 func (s *Server) createWorker(w http.ResponseWriter, r *http.Request) error {
 	var in workerInput
 	if err := readJSON(r, &in); err != nil {
@@ -71,6 +85,9 @@ func (s *Server) createWorker(w http.ResponseWriter, r *http.Request) error {
 	if err := s.db.QueryRow(r.Context(), `
 		INSERT INTO workers (name, email, phone, pay_rate_cents, active, notes) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
 		in.Name, in.Email, in.Phone, in.PayRateCents, *in.Active, in.Notes).Scan(&id); err != nil {
+		return err
+	}
+	if err := s.linkWorkerToUser(r.Context(), id, in.Email); err != nil {
 		return err
 	}
 	wk, err := one[Worker](r.Context(), s.db, workerSelect+` WHERE w.id = $1`, id)
@@ -100,6 +117,9 @@ func (s *Server) updateWorker(w http.ResponseWriter, r *http.Request) error {
 	}
 	if tag.RowsAffected() == 0 {
 		return errNotFound
+	}
+	if err := s.linkWorkerToUser(r.Context(), id, in.Email); err != nil {
+		return err
 	}
 	wk, err := one[Worker](r.Context(), s.db, workerSelect+` WHERE w.id = $1`, id)
 	if err != nil {

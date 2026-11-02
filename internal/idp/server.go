@@ -75,6 +75,7 @@ func NewHandler(ctx context.Context, db *pgxpool.Pool, cfg Config) (http.Handler
 	ui := &loginUI{
 		storage:     storage,
 		users:       storage.users,
+		orgs:        NewOrgs(db, cfg.CryptoKey),
 		sessions:    sessions,
 		callbackURL: op.AuthCallbackURL(provider),
 		allowSignup: cfg.AllowSignup,
@@ -91,6 +92,7 @@ func NewHandler(ctx context.Context, db *pgxpool.Pool, cfg Config) (http.Handler
 	mux.HandleFunc("GET /account", ui.accountPage)
 	mux.HandleFunc("POST /account/logout", ui.accountLogout)
 	mux.HandleFunc("GET /logged-out", ui.loggedOut)
+	mux.HandleFunc("GET /internal/org-password", ui.orgPassword)
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/account", http.StatusFound)
 	})

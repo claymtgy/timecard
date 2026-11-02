@@ -40,7 +40,7 @@ watch(() => route.path, () => (menuOpen.value = false))
       </template>
       <div class="sidebar-foot">
         <div class="small">{{ session.me?.name || session.me?.email }}</div>
-        <div class="small muted" style="margin-bottom: 8px">{{ session.me?.role }}</div>
+        <div class="small muted" style="margin-bottom: 8px">{{ session.me?.organization }} · {{ session.me?.role }}</div>
         <button class="small" @click="logout">Sign out</button>
       </div>
     </nav>
